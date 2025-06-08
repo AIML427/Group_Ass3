@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import time
 import logging
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
@@ -34,7 +35,7 @@ def dataset_prep(dataset_path, columns_no, spark):
         label_indexer = StringIndexer(inputCol="label", outputCol="label_indexed")
         dataset_indexed = label_indexer.fit(dt_prep).transform(dt_prep) # Fit (StringIndexer) to learn the mapping
         #dataset_indexed.select("label", "label_indexed").show(5)
-
+        print("Data Prepared complete.")
         return dataset_indexed  # Return the prepared dataset for further processing
     
     except Exception as e:
@@ -121,6 +122,7 @@ def find_optimal_params(dataset, seed, enable_feature_selection=False, num_featu
     Perform cross-validation to find the optimal parameters for Logistic Regression.
     Optionally includes feature selection.
     """
+    print("Finding Optimal Values ...")
     # Spliting the dataset into training and test sets
     (training_data, test_data) = dataset.randomSplit([0.7, 0.3], seed=seed)
 
@@ -208,6 +210,28 @@ def save_to_csv(test_acc_li, train_acc_li, seeds, spark_session, filename="resul
     except Exception as e:
         print(f"Error writing results to CSV: {str(e)}")
 
+def print_results_table(test_acc_li, train_acc_li, seeds):
+    """
+    Create a DataFrame table from test_acc_li, train_acc_li, and seeds, 
+    and print it as a formatted table in the terminal.
+    """
+    try:
+        # Create a pandas DataFrame
+        results_df = pd.DataFrame({
+            "Run": range(1, len(seeds) + 1),
+            "Seed": seeds,
+            "Train Accuracy": train_acc_li,
+            "Test Accuracy": test_acc_li
+        })
+
+        # Print the DataFrame as a formatted table
+        print("\n------- Results Table ----")
+        print(results_df.to_string(index=False, float_format="{:.4f}".format))
+        print("----------------------------------------------------")
+    except Exception as e:
+        print(f"Error printing results table: {str(e)}")
+
+
 def main():
     # -------------------------- PARAMETER CONFIG --------------------------------
     data_path = "kdd.data"
@@ -220,23 +244,35 @@ def main():
     spark_session.sparkContext.setLogLevel("ERROR")
 
     # -------------------------- DATA TRANSFORMATION -------------------------------
-    print("\n------- STEP 1: Initial Data Preparation ---------")
+    print("\n------------------- DATA PREPARATION -----------------------")
+    
     # Prepare the dataset by reading and transforming it
+    print("\n----- STEP 1: Initial Data Preparation ------")
     dataset_indexed = dataset_prep(data_path, columns_no, spark_session)
      
     # Improve data quality 
-    print("\n------- STEP 2: Data Clearning ---------")
+    print("\n---- STEP 2: Data Clearning ----")
     dataset_cleaned = improve_data_quality(dataset_indexed, columns_no)
     
 
     # Find optimal parameters for Logistic Regression
-    #optimal_regParam, optimal_elasticNetParam = find_optimal_params(dataset_cleaned, seed=42)
-    optimal_regParam=0.000010
-    optimal_elasticNetParam=0.75
-    learning_rate = 0.001  # Learning rate for adjusting regularization parameters
+    print("\n---- STEP 3: Modle Parameter Optimization ----")
+    (train_data_optimize, test_data) = dataset_cleaned.randomSplit([0.7, 0.3], seed=42)
+    optimal_regParam, optimal_elasticNetParam = find_optimal_params(
+    train_data_optimize,
+    seed=42,
+    enable_feature_selection=True, # Set this to True
+    num_features_to_select=20     # Experiment with this value (e.g., 10, 15, 25, 30)
+    )
+    #optimal_regParam=0.000010
+    #optimal_elasticNetParam=0.75
+    #learning_rate = 0.001  # Learning rate for adjusting regularization parameters
     
+    # Start timing the loop
+    start_time = time.time()
+    print("\n--------------- RUNNING DECISION TREE CLASSIFIER ---------------\n")
+    print("----- Running model with different seeds ------\n")
     run_no = 1
-    print("\n------- Running Logistic Regression Classifier with different seeds ----------\n")
     for seed in seeds:
         # ----------------------- DATA PREPARATION --------------------------------
         # Spliting the dataset into training and test sets
@@ -257,26 +293,34 @@ def main():
         test_acc, test_pred, train_acc, train_pred = logistic_regression(train_data_scaled, test_data_scaled, seed, optimal_regParam, optimal_elasticNetParam)
 
         # Adjust parameters based on performance
-        if train_acc > test_acc:  # Overfitting detected
-            optimal_regParam += learning_rate  # Increase regularization to reduce overfitting
-            optimal_elasticNetParam = min(optimal_elasticNetParam + learning_rate, 1.0)  # Move towards L1 regularization
-        elif test_acc > train_acc:  # Underfitting detected
-            optimal_regParam = max(optimal_regParam - learning_rate, 0.0001)  # Decrease regularization to improve fit
-            optimal_elasticNetParam = max(optimal_elasticNetParam - learning_rate, 0.0)  # Move towards L2 regularization
+        #if train_acc > test_acc:  # Overfitting detected
+        #    optimal_regParam += learning_rate  # Increase regularization to reduce overfitting
+        #    optimal_elasticNetParam = min(optimal_elasticNetParam + learning_rate, 1.0)  # Move towards L1 regularization
+        #elif test_acc > train_acc:  # Underfitting detected
+        #    optimal_regParam = max(optimal_regParam - learning_rate, 0.0001)  # Decrease regularization to improve fit
+        #    optimal_elasticNetParam = max(optimal_elasticNetParam - learning_rate, 0.0)  # Move towards L2 regularization
         
-        test_acc_li.append(test_acc)
-        train_acc_li.append(train_acc)
+        test_acc_li.append(round(test_acc, 4))
+        train_acc_li.append(round(train_acc, 4))
+
         print(f"Run {run_no}, with seed({seed}) :")
-        print(f"Train Accuracy: {train_acc}")
-        print(f"Test Accuracy: {test_acc}\n")
+        print(f"Train Accuracy: {train_acc:.4f}")
+        print(f"Test Accuracy: {test_acc:.4f}\n")
 
         run_no += 1
 
-    # Save results to CSV
+    # End timing the loop
+    end_time = time.time()
+    total_time = end_time - start_time
+    print(f"Total running time for all loops: {total_time:.2f} seconds")
+    
+    # SAVE RESULT: Save results to CSV
     #save_to_csv(test_acc_li, train_acc_li, seeds, spark_session)
     
     spark_session.stop()
 
+    # ------------------------------ PRINTING  ----------------------------------
+    print("\n-------------------- SUMMARY OUTPUTS --------------------------\n")
     # Print Summaraization of results
     print("---------------------------------------------")
     print("Training Set Summary:")
@@ -285,6 +329,8 @@ def main():
     print("\nTest Set Summary:")
     summary(test_acc_li)
 
+    # Print the results table
+    print_results_table(test_acc_li, train_acc_li, seeds)
 
 if __name__ == "__main__":
     main()
