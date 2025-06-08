@@ -19,8 +19,13 @@ def dataset_prep(dataset_path, columns_no, spark):
     try:
         data_schema = StructType([StructField(f"feature_{i+1}", DoubleType(), True) for i in range(columns_no - 1)] +
                                  [StructField("label", StringType(), True)])
+        
         # Create a schema for the dataset with the specified number of columns
-        dt_raw = spark.read.format("csv").option("delimiter", ",").option("header", "false").schema(data_schema).load(dataset_path)
+        dt_raw = spark.read.format("csv").option("delimiter", ",")\
+                        .option("header", "false")\
+                        .schema(data_schema)\
+                        .load(dataset_path)
+        
         label_indexer = StringIndexer(inputCol="label", outputCol="label_indexed")
         dataset_indexed = label_indexer.fit(dt_raw).transform(dt_raw)
         print("Data Prepared complete.")
@@ -145,7 +150,7 @@ def print_results_table(test_acc_li, train_acc_li, seeds):
     except Exception as e:
         print(f"Error printing results table: {str(e)}")
 
-def main():
+def main(spark_session):
     # -------------------------- PARAMETER CONFIG --------------------------------
     data_path = "kdd.data"
     columns_no = 42  # Number of columns in the dataset 
@@ -155,8 +160,8 @@ def main():
     run_no = 1
 
     # -------------------------- SPARK SESSION INITIALIZATION --------------------
-    spark_session = SparkSession.builder.appName("spark_session").getOrCreate()
-    spark_session.sparkContext.setLogLevel("ERROR")
+    #spark_session = SparkSession.builder.appName("spark_session").getOrCreate()
+    #spark_session.sparkContext.setLogLevel("ERROR")
 
     # -------------------------- DATA PREPARATION -------------------------------
     print("\n------------------- DATA PREPARATION -----------------------")
@@ -208,7 +213,18 @@ def main():
     # Print the results table
     print_results_table(test_acc_li, train_acc_li, seeds)
 
-
 if __name__ == "__main__":
-    main()
+    # Initialize the Spark session
+    spark_session = SparkSession.builder.appName("DecisionTreeApp").getOrCreate()
+    spark_session.sparkContext.setLogLevel("ERROR")
+
+    try:
+        # Call the main function
+        main(spark_session)
+    finally:
+        # Stop the Spark session
+        spark_session.stop()
+        print("Spark session stopped successfully!")
+#if __name__ == "__main__":
+    #main()
     #spark.stop()  # Stop the Spark session if needed
