@@ -270,7 +270,7 @@ def main():
     
     # Start timing the loop
     start_time = time.time()
-    print("\n--------------- RUNNING DECISION TREE CLASSIFIER ---------------\n")
+    print("\n--------------- RUNNING LOGISTIC REGRESSION CLASSIFIER ---------------\n")
     print("----- Running model with different seeds ------\n")
     run_no = 1
     for seed in seeds:
